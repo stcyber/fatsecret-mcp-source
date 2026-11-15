@@ -49,7 +49,7 @@ const http = createServer(async (req: IncomingMessage, res: ServerResponse) => {
       }
       transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
-        onsessioninitialized: (id) => sessions.set(id, transport!),
+        onsessioninitialized: (id) => { sessions.set(id, transport!); },
       });
       transport.onclose = () => {
         if (transport?.sessionId) sessions.delete(transport.sessionId);
