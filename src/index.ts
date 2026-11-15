@@ -208,6 +208,37 @@ class FatSecretMcpServer {
     }
   }
 
+  // Persist OAuth 1.0 profile tokens across Render free-instance restarts.
+  // The Render API key is set once in the service Environment, never in GitHub or chat.
+  private async persistProfileTokensToRender(accessTokenValue: string, accessTokenSecretValue: string): Promise<'saved' | 'not_configured'> {
+    const apiKey = process.env.FATSECRET_RENDER_API_KEY;
+    const serviceId = process.env.RENDER_SERVICE_ID;
+    if (!apiKey || !serviceId) return 'not_configured';
+
+    // Update individual keys. The bulk Render endpoint would replace ALL env vars.
+    const vars = [
+      { key: 'FATSECRET_ACCESS_TOKEN', value: accessTokenValue },
+      { key: 'FATSECRET_ACCESS_TOKEN_SECRET', value: accessTokenSecretValue },
+    ];
+    for (const item of vars) {
+      const endpoint = `https://api.render.com/v1/services/${encodeURIComponent(serviceId)}/env-vars/${encodeURIComponent(item.key)}`;
+      const response = await fetch(endpoint, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ value: item.value }),
+      });
+      if (!response.ok) {
+        // Do not log API responses: they might contain credential values.
+        throw new Error(`Render credential persistence failed (HTTP ${response.status})`);
+      }
+    }
+    return 'saved';
+  }
+
   // ── OAuth 2.0 Token ──
 
   private async getOAuth2Token(): Promise<string> {
@@ -1009,11 +1040,24 @@ class FatSecretMcpServer {
         this.oauth1Credentials.accessTokenSecret = result.accessTokenSecret;
         this.pendingOAuth = null;
         sharedPendingOAuth = null;
+
+        let persistence: 'saved' | 'not_configured' | 'failed' = 'not_configured';
+        try {
+          persistence = await this.persistProfileTokensToRender(result.accessToken, result.accessTokenSecret);
+        } catch (error) {
+          // Return only the non-secret error category.
+          console.error('FatSecret Render persistence error:', error instanceof Error ? error.message : 'unknown error');
+          persistence = 'failed';
+        }
         return text({
-          message: 'Authentication successful! Profile tools are now available. Save returned credentials to secure Render environment variables immediately.',
-          access_token_for_persistence: result.accessToken,
-          access_token_secret_for_persistence: result.accessTokenSecret,
-          config_path: this.getConfigPath(),
+          message: 'FatSecret profile authentication successful.',
+          profile_authenticated: true,
+          render_environment_persistence: persistence,
+          next_step: persistence === 'saved'
+            ? 'Render tokens saved. Deploy this service once to activate them on future instances.'
+            : persistence === 'not_configured'
+              ? 'Add FATSECRET_RENDER_API_KEY to Render Environment (Save and deploy), then authorize again to persist access.'
+              : 'Render environment persistence failed; verify FATSECRET_RENDER_API_KEY permissions and reauthorize.',
         });
       },
     );
