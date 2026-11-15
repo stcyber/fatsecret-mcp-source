@@ -14,6 +14,7 @@ import { buildFoodsSearchV1Query, isMissingScopeError } from './food-search.js';
 import { buildOAuth1Params, requestToken, accessToken, type OAuth1Credentials } from './oauth1.js';
 import { fetchOAuth2Token, resolveRequestedScope } from './oauth2.js';
 import * as schemas from './schemas.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 
 const require = createRequire(import.meta.url);
 const { version } = require('../package.json');
@@ -1011,7 +1012,11 @@ class FatSecretMcpServer {
   }
 
   // ── Run ──
-
+  
+  async connect(transport: StreamableHTTPServerTransport): Promise<void> {
+    await this.server.connect(transport);
+  }
+  
   async run(): Promise<void> {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
