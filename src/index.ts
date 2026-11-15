@@ -155,7 +155,7 @@ class FatSecretMcpServer {
     const consumerSecret = process.env.FATSECRET_CONSUMER_SECRET || fileConfig.consumerSecret || '';
 
     this.oauth1Credentials = {
-      consumerKey: this.clientId,
+      consumerKey: process.env.FATSECRET_CONSUMER_KEY || this.clientId,
       consumerSecret,
       accessToken: fileConfig.accessToken,
       accessTokenSecret: fileConfig.accessTokenSecret,
