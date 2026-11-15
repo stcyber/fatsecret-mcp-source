@@ -208,35 +208,48 @@ class FatSecretMcpServer {
     }
   }
 
-  // Persist OAuth 1.0 profile tokens across Render free-instance restarts.
-  // The Render API key is set once in the service Environment, never in GitHub or chat.
-  private async persistProfileTokensToRender(accessTokenValue: string, accessTokenSecretValue: string): Promise<'saved' | 'not_configured'> {
+  // Persist OAuth secrets in service-level environment variables on Render's free plan.
+  // Render's API key must only exist as a server-side secret; never return it to MCP clients.
+  private async persistEnvVarToRender(key: string, value: string): Promise<boolean> {
     const apiKey = process.env.FATSECRET_RENDER_API_KEY;
     const serviceId = process.env.RENDER_SERVICE_ID;
-    if (!apiKey || !serviceId) return 'not_configured';
-
-    // Update individual keys. The bulk Render endpoint would replace ALL env vars.
-    const vars = [
-      { key: 'FATSECRET_ACCESS_TOKEN', value: accessTokenValue },
-      { key: 'FATSECRET_ACCESS_TOKEN_SECRET', value: accessTokenSecretValue },
-    ];
-    for (const item of vars) {
-      const endpoint = `https://api.render.com/v1/services/${encodeURIComponent(serviceId)}/env-vars/${encodeURIComponent(item.key)}`;
-      const response = await fetch(endpoint, {
-        method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ value: item.value }),
-      });
-      if (!response.ok) {
-        // Do not log API responses: they might contain credential values.
-        throw new Error(`Render credential persistence failed (HTTP ${response.status})`);
-      }
+    if (!apiKey || !serviceId) return false;
+    const endpoint = `https://api.render.com/v1/services/${encodeURIComponent(serviceId)}/env-vars/${encodeURIComponent(key)}`;
+    const response = await fetch(endpoint, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ value }),
+    });
+    if (!response.ok) {
+      // Do not log response body or sensitive credential values.
+      throw new Error(`Render environment write failed for ${key}: HTTP ${response.status}`);
     }
-    return 'saved';
+    return true;
+  }
+
+  private async persistProfileTokensToRender(accessTokenValue: string, accessTokenSecretValue: string): Promise<'saved' | 'not_configured'> {
+    const first = await this.persistEnvVarToRender('FATSECRET_ACCESS_TOKEN', accessTokenValue);
+    if (!first) return 'not_configured';
+    const second = await this.persistEnvVarToRender('FATSECRET_ACCESS_TOKEN_SECRET', accessTokenSecretValue);
+    return second ? 'saved' : 'not_configured';
+  }
+
+  private readPendingOAuth(): { token: string; secret: string } | null {
+    if (this.pendingOAuth) return this.pendingOAuth;
+    if (sharedPendingOAuth) return sharedPendingOAuth;
+    try {
+      const data: unknown = JSON.parse(process.env.FATSECRET_PENDING_OAUTH || 'null');
+      if (typeof data === 'object' && data !== null &&
+          'token' in data && typeof data.token === 'string' && data.token.length > 0 &&
+          'secret' in data && typeof data.secret === 'string' && data.secret.length > 0) {
+        return { token: data.token, secret: data.secret };
+      }
+    } catch { /* no persisted pending auth */ }
+    return null;
   }
 
   // ── OAuth 2.0 Token ──
@@ -1010,9 +1023,15 @@ class FatSecretMcpServer {
         });
         this.pendingOAuth = { token: result.oauthToken, secret: result.oauthTokenSecret };
         sharedPendingOAuth = this.pendingOAuth;
+        // Persist the short-lived request-token pair BEFORE asking the user for the PIN.
+        // This keeps the flow recoverable if Render starts a new container in between.
+        const saved = await this.persistEnvVarToRender('FATSECRET_PENDING_OAUTH', JSON.stringify(this.pendingOAuth));
+        if (!saved) throw new Error('Persistent authorization is not configured: FATSECRET_RENDER_API_KEY or RENDER_SERVICE_ID is missing.');
         return text({
           message: 'Visit the URL below to authorize the app, then use complete_auth with the verifier code.',
           authorization_url: result.authorizationUrl,
+          pending_auth_durable: true,
+          note: 'The request token is backed up in Render Environment. Deploy the service to ensure newly started instances load it.',
         });
       },
     );
@@ -1025,7 +1044,7 @@ class FatSecretMcpServer {
         annotations: { readOnlyHint: false, idempotentHint: false },
       },
       async ({ verifier }) => {
-        const pending = this.pendingOAuth || sharedPendingOAuth;
+        const pending = this.readPendingOAuth();
         if (!pending) {
           throw new Error('No pending OAuth flow. Call start_auth first.');
         }
@@ -1044,6 +1063,10 @@ class FatSecretMcpServer {
         let persistence: 'saved' | 'not_configured' | 'failed' = 'not_configured';
         try {
           persistence = await this.persistProfileTokensToRender(result.accessToken, result.accessTokenSecret);
+          if (persistence === 'saved') {
+            // An exchanged request token must not remain as an active fallback.
+            await this.persistEnvVarToRender('FATSECRET_PENDING_OAUTH', '');
+          }
         } catch (error) {
           // Return only the non-secret error category.
           console.error('FatSecret Render persistence error:', error instanceof Error ? error.message : 'unknown error');
