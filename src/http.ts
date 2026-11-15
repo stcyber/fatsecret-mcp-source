@@ -107,16 +107,18 @@ const http = createServer(async (req: IncomingMessage, res: ServerResponse) => {
       res.writeHead(302, { location: dest.toString(), 'cache-control': 'no-store' }); res.end(); return;
     }
     if (path === '/token' && req.method === 'POST') {
+      console.error('OAuth token endpoint reached');
       const q = await form(req);
-      if (q.get('grant_type') !== 'authorization_code') return oauthError(res, 400, 'unsupported_grant_type');
+      if (q.get('grant_type') !== 'authorization_code') { console.error('OAuth token: unsupported grant'); return oauthError(res, 400, 'unsupported_grant_type'); }
       const code = q.get('code') || '';
       const p = pending.get(code);
       pending.delete(code);
-      if (!p || p.expires < Date.now() || p.clientId !== q.get('client_id') || p.redirect !== q.get('redirect_uri')) return oauthError(res, 400, 'invalid_grant');
+      if (!p || p.expires < Date.now() || p.clientId !== q.get('client_id') || p.redirect !== q.get('redirect_uri')) { console.error('OAuth token: grant invalid', { codeFound: !!p, clientMatch: !!p && p.clientId === q.get('client_id'), redirectMatch: !!p && p.redirect === q.get('redirect_uri') }); return oauthError(res, 400, 'invalid_grant'); }
       const verifier = q.get('code_verifier') || '';
-      if (!/^[A-Za-z0-9._~-]{43,128}$/.test(verifier)) return oauthError(res, 400, 'invalid_grant');
+      if (!/^[A-Za-z0-9._~-]{43,128}$/.test(verifier)) { console.error('OAuth token: verifier format invalid'); return oauthError(res, 400, 'invalid_grant'); }
       const digest = createHash('sha256').update(verifier).digest('base64url');
-      if (!equal(digest, p.challenge)) return oauthError(res, 400, 'invalid_grant');
+      if (!equal(digest, p.challenge)) { console.error('OAuth token: PKCE mismatch'); return oauthError(res, 400, 'invalid_grant'); }
+      console.error('OAuth token: issued successfully');
       return send(res, 200, { access_token: token(), token_type: 'Bearer', expires_in: 2592000 });
     }
     if (path !== '/mcp') { res.writeHead(404).end(); return; }
