@@ -1010,7 +1010,9 @@ class FatSecretMcpServer {
         this.pendingOAuth = null;
         sharedPendingOAuth = null;
         return text({
-          message: 'Authentication successful! Profile tools are now available.',
+          message: 'Authentication successful! Profile tools are now available. Save returned credentials to secure Render environment variables immediately.',
+          access_token_for_persistence: result.accessToken,
+          access_token_secret_for_persistence: result.accessTokenSecret,
           config_path: this.getConfigPath(),
         });
       },
