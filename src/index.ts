@@ -1063,10 +1063,10 @@ class FatSecretMcpServer {
         let persistence: 'saved' | 'not_configured' | 'failed' = 'not_configured';
         try {
           persistence = await this.persistProfileTokensToRender(result.accessToken, result.accessTokenSecret);
-          if (persistence === 'saved') {
-            // An exchanged request token must not remain as an active fallback.
-            await this.persistEnvVarToRender('FATSECRET_PENDING_OAUTH', '');
-          }
+          // Render may reject setting an env var to an empty string (HTTP 400).
+          // The temporary request token is already consumed by FatSecret and cannot be reused.
+          // Do not turn successful persistence of the two profile tokens into a failure.
+          // A future start_auth will replace the stale request-token pair if needed.
         } catch (error) {
           // Return only the non-secret error category.
           console.error('FatSecret Render persistence error:', error instanceof Error ? error.message : 'unknown error');
