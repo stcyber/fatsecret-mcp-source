@@ -21,6 +21,9 @@ const { version } = require('../package.json');
 
 const BASE_URL = 'https://platform.fatsecret.com/rest';
 
+// Shared across MCP HTTP sessions within the same Render process.
+let sharedPendingOAuth: { token: string; secret: string } | null = null;
+
 // ── Helpers ──
 
 function dateToDays(dateStr: string): number {
@@ -975,6 +978,7 @@ class FatSecretMcpServer {
           consumerSecret: this.oauth1Credentials.consumerSecret,
         });
         this.pendingOAuth = { token: result.oauthToken, secret: result.oauthTokenSecret };
+        sharedPendingOAuth = this.pendingOAuth;
         return text({
           message: 'Visit the URL below to authorize the app, then use complete_auth with the verifier code.',
           authorization_url: result.authorizationUrl,
@@ -990,19 +994,21 @@ class FatSecretMcpServer {
         annotations: { readOnlyHint: false, idempotentHint: false },
       },
       async ({ verifier }) => {
-        if (!this.pendingOAuth) {
+        const pending = this.pendingOAuth || sharedPendingOAuth;
+        if (!pending) {
           throw new Error('No pending OAuth flow. Call start_auth first.');
         }
         const result = await accessToken(
           this.oauth1Credentials,
-          this.pendingOAuth.token,
-          this.pendingOAuth.secret,
+          pending.token,
+          pending.secret,
           verifier,
         );
         this.saveConfig({ accessToken: result.accessToken, accessTokenSecret: result.accessTokenSecret });
         this.oauth1Credentials.accessToken = result.accessToken;
         this.oauth1Credentials.accessTokenSecret = result.accessTokenSecret;
         this.pendingOAuth = null;
+        sharedPendingOAuth = null;
         return text({
           message: 'Authentication successful! Profile tools are now available.',
           config_path: this.getConfigPath(),
