@@ -157,8 +157,8 @@ class FatSecretMcpServer {
     this.oauth1Credentials = {
       consumerKey: process.env.FATSECRET_CONSUMER_KEY || this.clientId,
       consumerSecret,
-      accessToken: fileConfig.accessToken,
-      accessTokenSecret: fileConfig.accessTokenSecret,
+      accessToken: process.env.FATSECRET_ACCESS_TOKEN || fileConfig.accessToken,
+      accessTokenSecret: process.env.FATSECRET_ACCESS_TOKEN_SECRET || fileConfig.accessTokenSecret,
     };
 
     // 3. Log credential sources
