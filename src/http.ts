@@ -74,6 +74,7 @@ function authParams(q: URLSearchParams): boolean {
 const http = createServer(async (req: IncomingMessage, res: ServerResponse) => {
   try {
     const path = new URL(req.url || '/', origin).pathname;
+    if (path === '/authorize') console.error('OAuth authorize request:', req.method, 'content-type:', req.headers['content-type'] || 'none');
     if (path === '/health' && req.method === 'GET') return send(res, 200, { status: 'ok' });
 
     if ((path === '/.well-known/oauth-authorization-server' || path === '/.well-known/oauth-authorization-server/mcp') && req.method === 'GET') {
@@ -92,11 +93,12 @@ const http = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     }
     if (path === '/authorize' && (req.method === 'GET' || req.method === 'POST')) {
       const q = req.method === 'GET' ? new URL(req.url!, origin).searchParams : await form(req);
-      if (!authParams(q)) return oauthError(res, 400, 'invalid_request');
+      if (!authParams(q)) { console.error('OAuth authorize: invalid parameters', { method: req.method, hasClient: !!q.get('client_id'), hasState: !!q.get('state'), hasChallenge: !!q.get('code_challenge'), hasRedirect: !!q.get('redirect_uri') }); return oauthError(res, 400, 'invalid_request'); }
       let redirects: string[];
       try { redirects = JSON.parse(Buffer.from(q.get('client_id')!, 'base64url').toString()); } catch { return oauthError(res, 400, 'invalid_client'); }
       if (!Array.isArray(redirects) || !redirects.includes(q.get('redirect_uri')!)) return oauthError(res, 400, 'invalid_redirect_uri');
-      if (req.method === 'GET' || !equal(q.get('password') || '', ownerSecret!)) return html(res, 200, authForm(q, req.method === 'POST'));
+      if (req.method === 'GET' || !equal(q.get('password') || '', ownerSecret!)) { if (req.method === 'POST') console.error('OAuth authorize: owner secret did not match'); return html(res, 200, authForm(q, req.method === 'POST')); }
+      console.error('OAuth authorize: owner verified, redirecting to ChatGPT');
       const code = randomBytes(32).toString('base64url');
       pending.set(code, { clientId: q.get('client_id')!, redirect: q.get('redirect_uri')!, challenge: q.get('code_challenge')!, expires: Date.now() + 300000 });
       const dest = new URL(q.get('redirect_uri')!);
