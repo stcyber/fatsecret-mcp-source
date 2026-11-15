@@ -1026,5 +1026,9 @@ process.on('unhandledRejection', (err) => {
   console.error('Unhandled rejection:', err);
 });
 
-const server = new FatSecretMcpServer();
-server.run().catch(console.error);
+export { FatSecretMcpServer };
+
+if (process.env.FATSECRET_TRANSPORT !== 'http') {
+  const server = new FatSecretMcpServer();
+  server.run().catch(console.error);
+}
