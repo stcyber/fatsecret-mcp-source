@@ -104,7 +104,11 @@ const http = createServer(async (req: IncomingMessage, res: ServerResponse) => {
       const dest = new URL(q.get('redirect_uri')!);
       dest.searchParams.set('code', code);
       dest.searchParams.set('state', q.get('state')!);
-      res.writeHead(302, { location: dest.toString(), 'cache-control': 'no-store' }); res.end(); return;
+      // Some mobile browser OAuth handoffs do not follow a cross-site POST 302.
+      // Render a user-initiated HTTPS link to the exact registered redirect URI instead.
+      const returnUrl = escapeHtml(dest.toString());
+      console.error('OAuth authorize: presenting explicit ChatGPT return link');
+      return html(res, 200, '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authorization approved</title></head><body style="font:16px system-ui;max-width:440px;margin:60px auto;padding:20px"><h2>Authorization approved</h2><p>To finish connecting FatSecret, tap the button below.</p><p><a href="' + returnUrl + '" style="display:inline-block;padding:14px 18px;background:#111;color:#fff;border-radius:8px;text-decoration:none">Return to ChatGPT</a></p><p>Do not copy or share the link: it contains a temporary authorization code.</p></body></html>');
     }
     if (path === '/token' && req.method === 'POST') {
       console.error('OAuth token endpoint reached');
